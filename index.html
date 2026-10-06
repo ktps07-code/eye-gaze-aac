@@ -108,6 +108,10 @@
                 <i class="fa-solid fa-sliders"></i>
                 <span class="text-xs font-medium hidden sm:inline">靈敏度與聲音設定</span>
             </button>
+            <button id="startCameraBtn" class="p-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center space-x-1.5 shadow-md">
+                <i class="fa-solid fa-camera"></i>
+                <span class="text-xs font-medium hidden sm:inline">啟用前鏡頭</span>
+            </button>
         </div>
     </header>
 
@@ -1028,22 +1032,50 @@
 
         faceMesh.onResults(onResults);
 
-        const camera = new Camera(webcam, {
-            onFrame: async () => {
-                await faceMesh.send({ image: webcam });
-            },
-            width: 640,
-            height: 480
-        });
+        let cameraStream = null;
+        let visionLoopStarted = false;
 
-        // Start Camera
-        Promise.resolve(camera.start()).then(() => {
-            console.log("Webcam started successfully.");
-        }).catch(err => {
-            console.error("Webcam Error:", err);
-            statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30";
-            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400 mr-2"></span>相機啟動失敗`;
-        });
+        async function startFrontCamera() {
+            const startButton = document.getElementById('startCameraBtn');
+            try {
+                if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+                    throw new Error('需要 HTTPS 網址才能使用相機');
+                }
+                startButton.disabled = true;
+                startButton.querySelector('span').textContent = '相機啟動中...';
+                if (cameraStream) cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: {
+                        facingMode: { ideal: 'user' },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                webcam.srcObject = cameraStream;
+                await webcam.play();
+                statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 mr-2"></span>前鏡頭已啟用`;
+                startButton.querySelector('span').textContent = '重新啟用前鏡頭';
+                startButton.disabled = false;
+                if (!visionLoopStarted) {
+                    visionLoopStarted = true;
+                    const visionLoop = async () => {
+                        if (webcam.readyState >= 2) await faceMesh.send({ image: webcam });
+                        requestAnimationFrame(visionLoop);
+                    };
+                    visionLoop();
+                }
+            } catch (err) {
+                console.error('Webcam Error:', err);
+                startButton.disabled = false;
+                startButton.querySelector('span').textContent = '啟用前鏡頭';
+                statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400 mr-2"></span>${err.message || '相機啟動失敗'}`;
+            }
+        }
+
+        document.getElementById('startCameraBtn').addEventListener('click', startFrontCamera);
 
         // Toggle Mirroring
         document.getElementById('toggleMirrorBtn').addEventListener('click', () => {
