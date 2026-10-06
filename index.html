@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>眼動與眨眼語音輔具系統 (Eye-Tracking AAC)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -48,6 +51,8 @@
         }
         .overlay-card {
             opacity: 0.88;
+            font-size: clamp(1.35rem, 3.2vw, 3.6rem);
+            line-height: 1.15;
             transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
         }
         .overlay-card.overlay-active {
@@ -55,6 +60,56 @@
             transform: scale(1.05);
             background-color: rgba(8, 145, 178, 0.92);
             box-shadow: 0 0 24px rgba(34, 211, 238, 0.75);
+        }
+        html.fullscreen-fallback, body.fullscreen-fallback {
+            overflow: hidden;
+            height: 100%;
+        }
+        body.fullscreen-fallback {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+        }
+        body.fullscreen-fallback > main {
+            height: calc(100dvh - 70px);
+            overflow-y: auto;
+        }
+        @media (orientation: landscape) {
+            body > header {
+                display: none !important;
+            }
+            body > main {
+                display: block !important;
+                width: 100% !important;
+                max-width: none !important;
+                height: 100dvh;
+                padding-top: 0.5rem;
+                padding-bottom: 0.5rem;
+                padding-left: 0 !important;
+                padding-right: 0 !important;
+            }
+            body > main > section:first-child {
+                display: block !important;
+                width: 100%;
+                height: 100%;
+            }
+            body > main > section:last-child,
+            #cameraToolbar,
+            #liveMetrics,
+            #speechLogCard {
+                display: none !important;
+            }
+            #cameraCard {
+                height: 100%;
+                border: 0;
+                border-radius: 0;
+                padding: 0;
+            }
+            #cameraCard > .relative {
+                height: 100%;
+                aspect-ratio: auto;
+                border-radius: 0;
+            }
         }
         #gazePointer {
             position: absolute;
@@ -112,6 +167,13 @@
                 <i class="fa-solid fa-camera"></i>
                 <span class="text-xs font-medium hidden sm:inline">啟用前鏡頭</span>
             </button>
+            <button id="unlockSpeechBtn" class="p-2.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition flex items-center space-x-1.5 shadow-md">
+                <i class="fa-solid fa-comment-dots"></i>
+                <span class="text-xs font-medium hidden sm:inline">啟用語音</span>
+            </button>
+            <button id="fullscreenBtn" class="p-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition" title="全螢幕">
+                <i class="fa-solid fa-expand"></i>
+            </button>
         </div>
     </header>
 
@@ -122,8 +184,8 @@
         <section class="lg:col-span-4 flex flex-col space-y-4">
             
             <!-- Video Container Card -->
-            <div class="bg-slate-800 rounded-2xl border border-slate-700 p-3 flex flex-col relative overflow-hidden shadow-xl">
-                <div class="flex items-center justify-between mb-2 px-1">
+            <div id="cameraCard" class="bg-slate-800 rounded-2xl border border-slate-700 p-3 flex flex-col relative overflow-hidden shadow-xl">
+                <div id="cameraToolbar" class="flex items-center justify-between mb-2 px-1">
                     <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                         <i class="fa-solid fa-video text-indigo-400"></i> 即時影像與視線追蹤
                     </span>
@@ -142,12 +204,12 @@
 
                     <!-- Large text cards layered directly over the camera preview -->
                     <div id="cameraTextCards" class="absolute inset-0 z-10 grid grid-cols-3 grid-rows-2 gap-1.5 p-2 pointer-events-none">
-                        <div id="overlay-left" class="overlay-card rounded-xl border-2 border-blue-300/70 bg-blue-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">我想喝水</div>
-                        <div id="overlay-right" class="overlay-card rounded-xl border-2 border-emerald-300/70 bg-emerald-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">請幫我翻身</div>
-                        <div id="overlay-up" class="overlay-card rounded-xl border-2 border-amber-300/70 bg-amber-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">請幫我坐起來</div>
-                        <div id="overlay-down" class="overlay-card rounded-xl border-2 border-violet-300/70 bg-violet-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">我想休息</div>
-                        <div id="overlay-blinkOnce" class="overlay-card rounded-xl border-2 border-cyan-300/70 bg-cyan-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">是</div>
-                        <div id="overlay-blinkTwice" class="overlay-card rounded-xl border-2 border-rose-300/70 bg-rose-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">不是</div>
+                        <div id="overlay-left" class="overlay-card rounded-xl border-2 border-blue-300/70 bg-blue-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">我想喝水</div>
+                        <div id="overlay-right" class="overlay-card rounded-xl border-2 border-emerald-300/70 bg-emerald-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">請幫我翻身</div>
+                        <div id="overlay-up" class="overlay-card rounded-xl border-2 border-amber-300/70 bg-amber-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">請幫我坐起來</div>
+                        <div id="overlay-down" class="overlay-card rounded-xl border-2 border-violet-300/70 bg-violet-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">我想休息</div>
+                        <div id="overlay-blinkOnce" class="overlay-card rounded-xl border-2 border-cyan-300/70 bg-cyan-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">是</div>
+                        <div id="overlay-blinkTwice" class="overlay-card rounded-xl border-2 border-rose-300/70 bg-rose-950/75 px-1 py-2 flex items-center justify-center text-center font-black text-white">不是</div>
                     </div>
                     <div id="categoryTextCards" class="absolute inset-0 z-11 grid grid-cols-2 gap-2 p-3 pointer-events-none">
                         <div id="category-physiological" class="overlay-card rounded-2xl border-2 border-cyan-300/70 bg-cyan-950/85 px-2 py-4 flex items-center justify-center text-center text-xl sm:text-3xl font-black text-white">生理需求</div>
@@ -175,7 +237,7 @@
                 </div>
 
                 <!-- Live Metrics Dashboard -->
-                <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div id="liveMetrics" class="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
                         <div class="text-slate-400 mb-1">左眼睜開度 (EAR)</div>
                         <div id="leftEarValue" class="font-mono text-indigo-300 font-bold">0.00</div>
@@ -195,7 +257,7 @@
             </div>
 
             <!-- Quick Logs / Last Spoken Card -->
-            <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4 flex-1 flex flex-col shadow-xl">
+            <div id="speechLogCard" class="bg-slate-800 rounded-2xl border border-slate-700 p-4 flex-1 flex flex-col shadow-xl">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                         <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> 最近發音紀錄
@@ -217,7 +279,7 @@
                 <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
                     <i class="fa-solid fa-border-all text-indigo-400"></i> 動作控制板 (眼動發音)
                 </h2>
-                <span class="text-xs text-slate-400">請保持頭部穩定，使用眼球移動或眨眼觸發</span>
+                <span class="text-xs text-slate-400">下方六格文字可修改；眼睛選取後眨眼確認</span>
             </div>
 
             <!-- Large text board for gaze selection -->
@@ -241,18 +303,18 @@
             </div>
 
             <!-- 6 Gesture Action Cards Grid -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 flex-1">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 flex-1">
 
                 <!-- 1. Look Left -->
                 <div id="card-left" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-arrow-left"></i>
+                                <i class="fa-solid fa-arrow-up-left"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">向左看</h3>
-                                <p class="text-xs text-slate-400">Look Left</p>
+                                <h3 class="font-bold text-slate-100 text-base">左上</h3>
+                                <p class="text-xs text-slate-400">Top Left</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('left')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -274,11 +336,11 @@
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-arrow-right"></i>
+                                <i class="fa-solid fa-arrow-up"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">向右看</h3>
-                                <p class="text-xs text-slate-400">Look Right</p>
+                                <h3 class="font-bold text-slate-100 text-base">中上</h3>
+                                <p class="text-xs text-slate-400">Top Center</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('right')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -300,11 +362,11 @@
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-arrow-up"></i>
+                                <i class="fa-solid fa-arrow-up-right"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">向上看</h3>
-                                <p class="text-xs text-slate-400">Look Up</p>
+                                <h3 class="font-bold text-slate-100 text-base">右上</h3>
+                                <p class="text-xs text-slate-400">Top Right</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('up')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -326,11 +388,11 @@
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-arrow-down"></i>
+                                <i class="fa-solid fa-arrow-down-left"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">向下看</h3>
-                                <p class="text-xs text-slate-400">Look Down</p>
+                                <h3 class="font-bold text-slate-100 text-base">左下</h3>
+                                <p class="text-xs text-slate-400">Bottom Left</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('down')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -352,11 +414,11 @@
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-eye"></i>
+                                <i class="fa-solid fa-arrow-down"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">眨眼一下</h3>
-                                <p class="text-xs text-slate-400">Single Blink</p>
+                                <h3 class="font-bold text-slate-100 text-base">中下</h3>
+                                <p class="text-xs text-slate-400">Bottom Center</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('blinkOnce')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -378,11 +440,11 @@
                     <div class="flex items-start justify-between mb-3">
                         <div class="flex items-center space-x-3">
                             <div class="w-12 h-12 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center text-2xl font-bold">
-                                <i class="fa-solid fa-eye-slash"></i>
+                                <i class="fa-solid fa-arrow-down-right"></i>
                             </div>
                             <div>
-                                <h3 class="font-bold text-slate-100 text-base">眨眼兩下</h3>
-                                <p class="text-xs text-slate-400">Double Blink</p>
+                                <h3 class="font-bold text-slate-100 text-base">右下</h3>
+                                <p class="text-xs text-slate-400">Bottom Right</p>
                             </div>
                         </div>
                         <button onclick="speakActionText('blinkTwice')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
@@ -541,6 +603,7 @@
         let activeCategory = 'physiological';
         let pointerMode = 'nose';
         let pointerPosition = { x: 50, y: 50 };
+        let speechReady = false;
         const categoryItems = {
             physiological: {
                 label: '生理需求',
@@ -637,8 +700,10 @@
 
             // Web Speech API
             if ('speechSynthesis' in window) {
+                speechReady = true;
                 window.speechSynthesis.cancel(); // Cancel ongoing speech
                 const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                utterance.lang = 'zh-TW';
                 utterance.rate = config.speechRate;
                 utterance.pitch = config.speechPitch;
 
@@ -654,9 +719,30 @@
             addLogRecord(actionKey, textToSpeak);
         }
 
+        function unlockSpeech() {
+            if (!('speechSynthesis' in window)) {
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400 mr-2"></span>瀏覽器不支援語音`;
+                return;
+            }
+            window.speechSynthesis.cancel();
+            const warmup = new SpeechSynthesisUtterance('語音已啟用');
+            warmup.lang = 'zh-TW';
+            warmup.volume = 0.01;
+            warmup.rate = 1;
+            window.speechSynthesis.speak(warmup);
+            speechReady = true;
+            document.getElementById('unlockSpeechBtn').querySelector('span').textContent = '語音已啟用';
+        }
+
         function applyCategory(categoryKey) {
             activeCategory = categoryKey;
             const category = categoryItems[categoryKey];
+            try {
+                const savedCategory = JSON.parse(localStorage.getItem(`eyeAacCategory:${categoryKey}`) || '{}');
+                Object.assign(category.items, savedCategory);
+            } catch (error) {
+                console.warn('無法讀取分類字卡設定', error);
+            }
             document.getElementById('categoryTextCards').classList.add('hidden');
             document.getElementById('cameraTextCards').classList.remove('hidden');
             Object.entries(category.items).forEach(([key, phrase]) => {
@@ -705,8 +791,8 @@
         function addLogRecord(actionKey, text) {
             const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
             const actionNames = {
-                left: '向左看', right: '向右看', up: '向上看', down: '向下看',
-                blinkOnce: '眨眼一下', blinkTwice: '眨眼兩下'
+                left: '左上', right: '中上', up: '右上', down: '左下',
+                blinkOnce: '中下', blinkTwice: '右下'
             };
 
             const logItem = document.createElement('div');
@@ -1001,7 +1087,7 @@
             }
 
             dwellProgressOverlay.classList.remove('opacity-0');
-            const directionNames = { left: '向左看', right: '向右看', up: '向上看', down: '向下看' };
+            const directionNames = { left: '左上', right: '中上', up: '右上', down: '左下' };
             dwellText.textContent = `鎖定 ${directionNames[actionKey]} (${percent.toFixed(0)}%)`;
         }
 
@@ -1041,6 +1127,9 @@
                 if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
                     throw new Error('需要 HTTPS 網址才能使用相機');
                 }
+                // This click is a trusted user gesture on iOS Safari. Prime
+                // speech synthesis here so later blink-triggered speech works.
+                unlockSpeech();
                 startButton.disabled = true;
                 startButton.querySelector('span').textContent = '相機啟動中...';
                 if (cameraStream) cameraStream.getTracks().forEach(track => track.stop());
@@ -1076,6 +1165,40 @@
         }
 
         document.getElementById('startCameraBtn').addEventListener('click', startFrontCamera);
+        document.getElementById('unlockSpeechBtn').addEventListener('click', unlockSpeech);
+
+        async function toggleFullscreen() {
+            const button = document.getElementById('fullscreenBtn');
+            try {
+                if (document.fullscreenElement) {
+                    await document.exitFullscreen();
+                    document.documentElement.classList.remove('fullscreen-fallback');
+                    document.body.classList.remove('fullscreen-fallback');
+                    button.innerHTML = '<i class="fa-solid fa-expand"></i>';
+                    return;
+                }
+                if (document.documentElement.requestFullscreen) {
+                    await document.documentElement.requestFullscreen();
+                } else {
+                    document.documentElement.classList.add('fullscreen-fallback');
+                    document.body.classList.add('fullscreen-fallback');
+                }
+                button.innerHTML = '<i class="fa-solid fa-compress"></i>';
+            } catch (error) {
+                // iOS Safari may reject the native API; use the full-page fallback.
+                document.documentElement.classList.toggle('fullscreen-fallback');
+                document.body.classList.toggle('fullscreen-fallback');
+                const isFull = document.body.classList.contains('fullscreen-fallback');
+                button.innerHTML = isFull ? '<i class="fa-solid fa-compress"></i>' : '<i class="fa-solid fa-expand"></i>';
+            }
+        }
+
+        document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+        document.addEventListener('fullscreenchange', () => {
+            const button = document.getElementById('fullscreenBtn');
+            const isFull = Boolean(document.fullscreenElement);
+            button.innerHTML = isFull ? '<i class="fa-solid fa-compress"></i>' : '<i class="fa-solid fa-expand"></i>';
+        });
 
         // Toggle Mirroring
         document.getElementById('toggleMirrorBtn').addEventListener('click', () => {
@@ -1216,6 +1339,10 @@
             if (input && savedPhrase !== null) input.value = savedPhrase;
             if (input) input.addEventListener('input', () => localStorage.setItem(`eyeAacPhrase:${key}`, input.value));
             if (input) input.addEventListener('input', () => {
+                if (activeCategory && categoryItems[activeCategory]?.items[key] !== undefined) {
+                    categoryItems[activeCategory].items[key] = input.value;
+                    localStorage.setItem(`eyeAacCategory:${activeCategory}`, JSON.stringify(categoryItems[activeCategory].items));
+                }
                 const boardCard = document.getElementById(`board-${key}`);
                 if (boardCard) boardCard.textContent = input.value || '未設定語句';
                 const overlayCard = document.getElementById(`overlay-${key}`);
