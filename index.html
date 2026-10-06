@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>眼動與眨眼語音輔具系統 (Eye-Tracking AAC)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            touch-action: manipulation;
+        }
+        /* Custom progress ring & glow animations */
+        .glow-active {
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+            border-color: #3b82f6 !important;
+        }
+        .glow-trigger {
+            animation: triggerPulse 0.6s ease-out;
+        }
+        @keyframes triggerPulse {
+            0% { transform: scale(1); box-shadow: 0 0 0px rgba(34, 197, 94, 0); }
+            50% { transform: scale(1.03); box-shadow: 0 0 30px rgba(34, 197, 94, 0.8); }
+            100% { transform: scale(1); box-shadow: 0 0 0px rgba(34, 197, 94, 0); }
+        }
+        /* Video mirror mode */
+        .mirror {
+            transform: scaleX(-1);
+        }
+        .board-card {
+            min-height: 92px;
+            transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .board-card.board-active {
+            transform: scale(1.04);
+            border-color: #22d3ee !important;
+            box-shadow: 0 0 28px rgba(34, 211, 238, 0.42);
+        }
+        .overlay-card {
+            opacity: 0.88;
+            transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+        .overlay-card.overlay-active {
+            opacity: 1;
+            transform: scale(1.05);
+            background-color: rgba(8, 145, 178, 0.92);
+            box-shadow: 0 0 24px rgba(34, 211, 238, 0.75);
+        }
+        #gazePointer {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            z-index: 20;
+            width: 38px;
+            height: 38px;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid white;
+            border-radius: 999px;
+            background: rgba(8, 145, 178, 0.9);
+            box-shadow: 0 0 18px rgba(34, 211, 238, 0.9);
+            font-size: 22px;
+            pointer-events: none;
+            transition: left 100ms linear, top 100ms linear;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+
+    <!-- Header Navbar -->
+    <header class="bg-slate-800/90 backdrop-blur border-b border-slate-700 sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white text-xl shadow-lg shadow-indigo-500/30">
+                <i class="fa-solid fa-eye"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold leading-tight">眼動與眨眼語音輔具</h1>
+                <p class="text-xs text-slate-400">Eye-Tracking Speech AAC System</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <!-- System Status Badge -->
+            <span id="statusBadge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <span class="w-2 h-2 rounded-full bg-amber-400 mr-2 animate-pulse"></span>
+                相機準備中...
+            </span>
+
+            <!-- Mute Sound Toggle -->
+            <button id="toggleAudioBtn" class="p-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition">
+                <i class="fa-solid fa-volume-high text-sm"></i>
+            </button>
+
+            <!-- Settings Modal Button -->
+            <button id="openSettingsBtn" class="p-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1.5 shadow-md">
+                <i class="fa-solid fa-sliders"></i>
+                <span class="text-xs font-medium hidden sm:inline">靈敏度與聲音設定</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        <!-- Left Column: Camera Feed & Real-time Visualizer (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col space-y-4">
+            
+            <!-- Video Container Card -->
+            <div class="bg-slate-800 rounded-2xl border border-slate-700 p-3 flex flex-col relative overflow-hidden shadow-xl">
+                <div class="flex items-center justify-between mb-2 px-1">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-video text-indigo-400"></i> 即時影像與視線追蹤
+                    </span>
+                    <button id="toggleMirrorBtn" class="text-xs text-slate-400 hover:text-slate-200 transition bg-slate-700/50 px-2 py-0.5 rounded">
+                        <i class="fa-solid fa-arrow-right-arrow-left mr-1"></i>切換鏡頭鏡像
+                    </button>
+                    <button id="togglePointerModeBtn" class="text-xs text-cyan-300 hover:text-cyan-100 transition bg-cyan-900/50 px-2 py-0.5 rounded">
+                        鼻子控制游標
+                    </button>
+                </div>
+
+                <!-- Video + Canvas Overlay Wrap -->
+                <div class="relative w-full aspect-video sm:aspect-4/3 bg-black rounded-xl overflow-hidden border border-slate-700/80 shadow-inner">
+                    <video id="webcam" class="absolute inset-0 w-full h-full object-cover mirror" playsinline muted></video>
+                    <canvas id="outputCanvas" class="absolute inset-0 w-full h-full object-cover mirror"></canvas>
+
+                    <!-- Large text cards layered directly over the camera preview -->
+                    <div id="cameraTextCards" class="absolute inset-0 z-10 grid grid-cols-3 grid-rows-2 gap-1.5 p-2 pointer-events-none">
+                        <div id="overlay-left" class="overlay-card rounded-xl border-2 border-blue-300/70 bg-blue-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">我想喝水</div>
+                        <div id="overlay-right" class="overlay-card rounded-xl border-2 border-emerald-300/70 bg-emerald-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">請幫我翻身</div>
+                        <div id="overlay-up" class="overlay-card rounded-xl border-2 border-amber-300/70 bg-amber-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">請幫我坐起來</div>
+                        <div id="overlay-down" class="overlay-card rounded-xl border-2 border-violet-300/70 bg-violet-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">我想休息</div>
+                        <div id="overlay-blinkOnce" class="overlay-card rounded-xl border-2 border-cyan-300/70 bg-cyan-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">是</div>
+                        <div id="overlay-blinkTwice" class="overlay-card rounded-xl border-2 border-rose-300/70 bg-rose-950/75 px-1 py-2 flex items-center justify-center text-center text-sm sm:text-lg font-black text-white">不是</div>
+                    </div>
+                    <div id="categoryTextCards" class="absolute inset-0 z-11 grid grid-cols-2 gap-2 p-3 pointer-events-none">
+                        <div id="category-physiological" class="overlay-card rounded-2xl border-2 border-cyan-300/70 bg-cyan-950/85 px-2 py-4 flex items-center justify-center text-center text-xl sm:text-3xl font-black text-white">生理需求</div>
+                        <div id="category-body" class="overlay-card rounded-2xl border-2 border-fuchsia-300/70 bg-fuchsia-950/85 px-2 py-4 flex items-center justify-center text-center text-xl sm:text-3xl font-black text-white">身體需求</div>
+                    </div>
+                    <div id="gazePointer" aria-label="視線控制游標">☝️</div>
+
+                    <!-- Crosshair / Direction Overlay Center Pointer -->
+                    <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
+                        <div class="w-12 h-12 border border-white/20 rounded-full flex items-center justify-center">
+                            <div class="w-1 h-1 bg-indigo-400 rounded-full"></div>
+                        </div>
+                    </div>
+
+                    <!-- Visual Progress Ring overlay for gaze dwelling -->
+                    <div id="dwellProgressOverlay" class="absolute inset-0 pointer-events-none flex items-center justify-center opacity-0 transition-opacity duration-150">
+                        <div class="bg-slate-900/80 backdrop-blur px-4 py-2 rounded-xl border border-indigo-500/50 flex items-center space-x-2 shadow-2xl">
+                            <i id="dwellIcon" class="fa-solid fa-eye text-indigo-400 animate-bounce"></i>
+                            <span id="dwellText" class="text-sm font-bold text-white">鎖定中...</span>
+                        </div>
+                    </div>
+                    <div id="focusPrompt" class="absolute top-2 left-1/2 -translate-x-1/2 rounded-full bg-slate-950/80 px-3 py-1 text-xs font-bold text-cyan-200 opacity-0 transition-opacity">
+                        眨眼確認目前語句
+                    </div>
+                </div>
+
+                <!-- Live Metrics Dashboard -->
+                <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
+                        <div class="text-slate-400 mb-1">左眼睜開度 (EAR)</div>
+                        <div id="leftEarValue" class="font-mono text-indigo-300 font-bold">0.00</div>
+                    </div>
+                    <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
+                        <div class="text-slate-400 mb-1">右眼睜開度 (EAR)</div>
+                        <div id="rightEarValue" class="font-mono text-indigo-300 font-bold">0.00</div>
+                    </div>
+                    <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-700/50 col-span-2">
+                        <div class="text-slate-400 mb-1">瞳孔相對位置 (X, Y)</div>
+                        <div id="gazePosValue" class="font-mono text-emerald-300 font-bold">X: 0.50 | Y: 0.50</div>
+                        <button id="calibrateGazeBtn" class="mt-2 w-full rounded-lg bg-indigo-600/80 hover:bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white transition">
+                            <i class="fa-solid fa-crosshairs mr-1"></i>校準正中視線（請直視此按鈕）
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Logs / Last Spoken Card -->
+            <div class="bg-slate-800 rounded-2xl border border-slate-700 p-4 flex-1 flex flex-col shadow-xl">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i> 最近發音紀錄
+                    </h3>
+                    <button id="clearLogBtn" class="text-xs text-slate-400 hover:text-rose-400 transition">
+                        <i class="fa-solid fa-trash-can mr-1"></i>清除
+                    </button>
+                </div>
+                <div id="speechLogList" class="flex-1 max-h-48 overflow-y-auto space-y-2 pr-1 text-xs font-mono">
+                    <div class="text-slate-500 italic text-center py-4">尚無發音紀錄</div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Right Column: 6 Eye Gesture Command Cards (8 cols) -->
+        <section class="lg:col-span-8 flex flex-col">
+            <div class="flex items-center justify-between mb-3 px-1">
+                <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+                    <i class="fa-solid fa-border-all text-indigo-400"></i> 動作控制板 (眼動發音)
+                </h2>
+                <span class="text-xs text-slate-400">請保持頭部穩定，使用眼球移動或眨眼觸發</span>
+            </div>
+
+            <!-- Large text board for gaze selection -->
+            <div class="mb-4 rounded-2xl border border-cyan-500/30 bg-slate-950/70 p-3 shadow-xl">
+                <div class="mb-2 flex items-center justify-between px-1">
+                    <span class="text-sm font-bold text-cyan-200"><i class="fa-solid fa-comments mr-2"></i>大字卡選擇區</span>
+                    <span class="text-xs text-slate-400">看向卡片 → 高亮 → 眨眼確認</span>
+                </div>
+                <div class="mb-2 grid grid-cols-2 gap-2">
+                    <button id="categoryPhysiologicalBtn" class="rounded-lg bg-cyan-600 px-3 py-2 text-sm font-bold text-white">生理需求</button>
+                    <button id="categoryBodyBtn" class="rounded-lg bg-fuchsia-600 px-3 py-2 text-sm font-bold text-white">身體需求</button>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <button id="board-left" data-action="left" class="board-card rounded-xl border-2 border-blue-500/50 bg-blue-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('left')">我想喝水</button>
+                    <button id="board-right" data-action="right" class="board-card rounded-xl border-2 border-emerald-500/50 bg-emerald-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('right')">請幫我翻身</button>
+                    <button id="board-up" data-action="up" class="board-card rounded-xl border-2 border-amber-500/50 bg-amber-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('up')">請幫我坐起來</button>
+                    <button id="board-down" data-action="down" class="board-card rounded-xl border-2 border-violet-500/50 bg-violet-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('down')">我想休息</button>
+                    <button id="board-blinkOnce" data-action="blinkOnce" class="board-card rounded-xl border-2 border-cyan-500/50 bg-cyan-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('blinkOnce')">是</button>
+                    <button id="board-blinkTwice" data-action="blinkTwice" class="board-card rounded-xl border-2 border-rose-500/50 bg-rose-500/15 px-2 py-3 text-xl sm:text-2xl font-black text-white" onclick="speakActionText('blinkTwice')">不是</button>
+                </div>
+            </div>
+
+            <!-- 6 Gesture Action Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 flex-1">
+
+                <!-- 1. Look Left -->
+                <div id="card-left" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-arrow-left"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">向左看</h3>
+                                <p class="text-xs text-slate-400">Look Left</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('left')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-left" value="我想喝水" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Dwell Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-left" class="bg-blue-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+                <!-- 2. Look Right -->
+                <div id="card-right" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-arrow-right"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">向右看</h3>
+                                <p class="text-xs text-slate-400">Look Right</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('right')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-right" value="請幫我翻身" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Dwell Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-right" class="bg-emerald-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+                <!-- 3. Look Up -->
+                <div id="card-up" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-arrow-up"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">向上看</h3>
+                                <p class="text-xs text-slate-400">Look Up</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('up')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-up" value="請幫我坐起來" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Dwell Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-up" class="bg-amber-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+                <!-- 4. Look Down -->
+                <div id="card-down" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-arrow-down"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">向下看</h3>
+                                <p class="text-xs text-slate-400">Look Down</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('down')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-down" value="我想休息了" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Dwell Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-down" class="bg-purple-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+                <!-- 5. Blink Once -->
+                <div id="card-blinkOnce" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-eye"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">眨眼一下</h3>
+                                <p class="text-xs text-slate-400">Single Blink</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('blinkOnce')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-blinkOnce" value="是的 / 對" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-blinkOnce" class="bg-cyan-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+                <!-- 6. Blink Twice -->
+                <div id="card-blinkTwice" class="gesture-card bg-slate-800 rounded-2xl border-2 border-slate-700 p-4 transition-all duration-200 flex flex-col justify-between relative overflow-hidden group">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center text-2xl font-bold">
+                                <i class="fa-solid fa-eye-slash"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-100 text-base">眨眼兩下</h3>
+                                <p class="text-xs text-slate-400">Double Blink</p>
+                            </div>
+                        </div>
+                        <button onclick="speakActionText('blinkTwice')" class="p-2 rounded-lg bg-slate-700/60 hover:bg-slate-600 text-slate-300 hover:text-white transition" title="手動測試發音">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">觸發對應語音句子：</label>
+                        <input type="text" id="phrase-blinkTwice" value="不是 / 不需要" class="w-full bg-slate-900/90 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm font-medium focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <!-- Progress Bar -->
+                    <div class="w-full bg-slate-900 h-1.5 rounded-full mt-3 overflow-hidden">
+                        <div id="progress-blinkTwice" class="bg-rose-500 h-full w-0 transition-all duration-75"></div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+    </main>
+
+    <!-- Settings Drawer Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            
+            <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-indigo-400"></i> 眼動參數與系統設定
+                </h3>
+                <button id="closeSettingsBtn" class="text-slate-400 hover:text-white text-xl">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Settings Form -->
+            <div class="space-y-4 text-xs sm:text-sm">
+                
+                <!-- Dwell Time Slider -->
+                <div>
+                    <div class="flex justify-between font-medium text-slate-300 mb-1">
+                        <span>注視觸發所需時間 (Dwell Time)</span>
+                        <span id="dwellTimeVal" class="text-indigo-400 font-mono font-bold">0.8 秒</span>
+                    </div>
+                    <input type="range" id="dwellTimeInput" min="0.3" max="2.0" step="0.1" value="0.8" class="w-full accent-indigo-500">
+                    <p class="text-xs text-slate-400 mt-0.5">眼球保持特定方向不變多久後自動朗讀。</p>
+                </div>
+
+                <!-- Cooldown Time Slider -->
+                <div>
+                    <div class="flex justify-between font-medium text-slate-300 mb-1">
+                        <span>觸發冷卻防重複時間 (Cooldown)</span>
+                        <span id="cooldownTimeVal" class="text-indigo-400 font-mono font-bold">1.5 秒</span>
+                    </div>
+                    <input type="range" id="cooldownTimeInput" min="0.5" max="4.0" step="0.5" value="1.5" class="w-full accent-indigo-500">
+                </div>
+
+                <!-- Blink EAR Threshold -->
+                <div>
+                    <div class="flex justify-between font-medium text-slate-300 mb-1">
+                        <span>眨眼判定門檻 (EAR Threshold)</span>
+                        <span id="blinkEarVal" class="text-indigo-400 font-mono font-bold">0.19</span>
+                    </div>
+                    <input type="range" id="blinkEarInput" min="0.12" max="0.28" step="0.01" value="0.19" class="w-full accent-indigo-500">
+                    <p class="text-xs text-slate-400 mt-0.5">數值越小需要閉得越緊才會視為眨眼。</p>
+                </div>
+
+                <!-- Double Blink Speed Threshold -->
+                <div>
+                    <div class="flex justify-between font-medium text-slate-300 mb-1">
+                        <span>雙眨眼最長間隔 (Double Blink Window)</span>
+                        <span id="doubleBlinkSpeedVal" class="text-indigo-400 font-mono font-bold">450 ms</span>
+                    </div>
+                    <input type="range" id="doubleBlinkSpeedInput" min="250" max="800" step="50" value="450" class="w-full accent-indigo-500">
+                </div>
+
+                <!-- Eye Gaze Sensitivity (H & V) -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <div class="flex justify-between font-medium text-slate-300 mb-1">
+                            <span>水平轉眼靈敏度</span>
+                            <span id="gazeHorizVal" class="text-indigo-400 font-mono font-bold">0.38</span>
+                        </div>
+                        <input type="range" id="gazeHorizInput" min="0.25" max="0.45" step="0.01" value="0.38" class="w-full accent-indigo-500">
+                    </div>
+                    <div>
+                        <div class="flex justify-between font-medium text-slate-300 mb-1">
+                            <span>垂直轉眼靈敏度</span>
+                            <span id="gazeVertVal" class="text-indigo-400 font-mono font-bold">0.35</span>
+                        </div>
+                        <input type="range" id="gazeVertInput" min="0.20" max="0.45" step="0.01" value="0.35" class="w-full accent-indigo-500">
+                    </div>
+                </div>
+
+                <!-- TTS Voice Selection & Rate -->
+                <div class="border-t border-slate-700 pt-3">
+                    <label class="block font-medium text-slate-300 mb-1">選擇語音發音人 (TTS Voice)</label>
+                    <select id="voiceSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+                        <option value="">預設系統發音 (Default)</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">朗讀語速 (Speech Rate)</label>
+                        <input type="range" id="speechRateInput" min="0.5" max="1.5" step="0.1" value="1.0" class="w-full accent-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-slate-300 mb-1">朗讀音調 (Pitch)</label>
+                        <input type="range" id="speechPitchInput" min="0.5" max="1.5" step="0.1" value="1.0" class="w-full accent-indigo-500">
+                    </div>
+                </div>
+
+                <label class="flex items-center justify-between rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm text-slate-200">
+                    <span><i class="fa-solid fa-hand-pointer mr-2 text-cyan-300"></i>視線選取後眨眼確認</span>
+                    <input id="blinkConfirmInput" type="checkbox" checked class="h-5 w-5 accent-cyan-500">
+                </label>
+
+            </div>
+
+            <div class="pt-2 flex justify-end">
+                <button id="saveSettingsBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-5 py-2 rounded-xl transition shadow-lg">
+                    儲存變更 (Save Settings)
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // Configuration Parameters with Defaults
+        const config = {
+            dwellTime: 0.8,         // Seconds needed in direction to trigger
+            cooldownTime: 1.5,      // Cooldown in seconds after speech
+            blinkEarThreshold: 0.19, // Eye aspect ratio threshold for blink
+            doubleBlinkWindow: 450,  // Max ms between blinks for double blink
+            gazeHorizOffset: 0.38,   // Offset threshold for left/right gaze
+            gazeVertOffset: 0.35,    // Offset threshold for up/down gaze
+            isAudioMuted: false,     // Beep sound muted flag
+            speechRate: 1.0,
+            speechPitch: 1.0,
+            selectedVoiceURI: '',
+            blinkConfirm: true
+        };
+
+        // Runtime Tracking States
+        let currentGesture = null;       // 'left', 'right', 'up', 'down', 'blinkOnce', 'blinkTwice'
+        let dwellStartTime = null;
+        let lastTriggerTime = 0;         // Timestamp for cooldown
+        let blinkHistory = [];           // Timestamps of blinks
+        let isEyeClosed = false;
+        let isMirrored = true;
+        let smoothedGaze = { x: 0.5, y: 0.5 };
+        let neutralGaze = { x: 0.5, y: 0.5 };
+        let hasGazeCalibration = false;
+        let isCalibrating = false;
+        let focusedGesture = null;
+        let activeCategory = 'physiological';
+        let pointerMode = 'nose';
+        let pointerPosition = { x: 50, y: 50 };
+        const categoryItems = {
+            physiological: {
+                label: '生理需求',
+                items: {
+                    left: '喝水', right: '吃飯', up: '大便了', down: '小便了',
+                    blinkOnce: '請換尿布', blinkTwice: '請叫護理師'
+                }
+            },
+            body: {
+                label: '身體需求',
+                items: {
+                    left: '手麻', right: '腳麻', up: '背部麻', down: '請幫我翻身',
+                    blinkOnce: '請幫我抬腿', blinkTwice: '請幫我抬手'
+                }
+            }
+        };
+        let calibrationSamples = [];
+
+        // DOM Element References
+        const webcam = document.getElementById('webcam');
+        const canvas = document.getElementById('outputCanvas');
+        const canvasCtx = canvas.getContext('2d');
+        const statusBadge = document.getElementById('statusBadge');
+
+        const leftEarVal = document.getElementById('leftEarValue');
+        const rightEarVal = document.getElementById('rightEarValue');
+        const gazePosVal = document.getElementById('gazePosValue');
+        const speechLogList = document.getElementById('speechLogList');
+        const dwellProgressOverlay = document.getElementById('dwellProgressOverlay');
+        const dwellText = document.getElementById('dwellText');
+
+        // Web Audio Context for Beeps
+        let audioCtx = null;
+
+        function playBeep(freq = 880, duration = 0.12) {
+            if (config.isAudioMuted) return;
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.warn('Audio Beep Error:', e);
+            }
+        }
+
+        let voices = [];
+        function populateVoices() {
+            if ('speechSynthesis' in window) {
+                voices = window.speechSynthesis.getVoices();
+                const voiceSelect = document.getElementById('voiceSelect');
+                voiceSelect.innerHTML = '<option value="">預設系統發音 (Default)</option>';
+                voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.voiceURI;
+                    option.textContent = `${voice.name} (${voice.lang})`;
+                    if (voice.lang.includes('zh') || voice.lang.includes('ZH')) {
+                        option.selected = true;
+                        config.selectedVoiceURI = voice.voiceURI;
+                    }
+                    voiceSelect.appendChild(option);
+                });
+            }
+        }
+
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = populateVoices;
+            populateVoices();
+        }
+
+        function speakActionText(actionKey) {
+            const phraseInput = document.getElementById(`phrase-${actionKey}`);
+            if (!phraseInput) return;
+            const textToSpeak = phraseInput.value.trim();
+            if (!textToSpeak) return;
+
+            // Trigger Visual Glow on Card
+            const card = document.getElementById(`card-${actionKey}`);
+            if (card) {
+                card.classList.add('glow-trigger');
+                setTimeout(() => card.classList.remove('glow-trigger'), 600);
+            }
+
+            // Audio Cue
+            playBeep(1046.5, 0.18); // C6 Note
+
+            // Web Speech API
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel(); // Cancel ongoing speech
+                const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                utterance.rate = config.speechRate;
+                utterance.pitch = config.speechPitch;
+
+                if (config.selectedVoiceURI) {
+                    const foundVoice = voices.find(v => v.voiceURI === config.selectedVoiceURI);
+                    if (foundVoice) utterance.voice = foundVoice;
+                }
+
+                window.speechSynthesis.speak(utterance);
+            }
+
+            // Log Speech Record
+            addLogRecord(actionKey, textToSpeak);
+        }
+
+        function applyCategory(categoryKey) {
+            activeCategory = categoryKey;
+            const category = categoryItems[categoryKey];
+            document.getElementById('categoryTextCards').classList.add('hidden');
+            document.getElementById('cameraTextCards').classList.remove('hidden');
+            Object.entries(category.items).forEach(([key, phrase]) => {
+                const phraseInput = document.getElementById(`phrase-${key}`);
+                const boardCard = document.getElementById(`board-${key}`);
+                const overlayCard = document.getElementById(`overlay-${key}`);
+                if (phraseInput) phraseInput.value = phrase;
+                if (boardCard) boardCard.textContent = phrase;
+                if (overlayCard) overlayCard.textContent = phrase;
+            });
+            document.getElementById('focusPrompt').textContent = `${category.label}：請看字卡並眨眼確認`;
+        }
+
+        function showCategoryPicker() {
+            activeCategory = null;
+            focusedGesture = null;
+            document.getElementById('cameraTextCards').classList.add('hidden');
+            document.getElementById('categoryTextCards').classList.remove('hidden');
+            document.getElementById('focusPrompt').textContent = '請選擇：生理需求或身體需求';
+            document.getElementById('focusPrompt').classList.remove('opacity-0');
+        }
+
+        function getGazeTarget(gazeX, gazeY) {
+            const pointerX = pointerPosition.x;
+            const pointerY = pointerPosition.y;
+            if (!activeCategory) return pointerX < 50 ? 'category:physiological' : 'category:body';
+            const col = Math.min(2, Math.floor(pointerX / 33.333));
+            const row = Math.min(1, Math.floor(pointerY / 50));
+            return ['left', 'right', 'up', 'down', 'blinkOnce', 'blinkTwice'][row * 3 + col];
+        }
+
+        function confirmFocusedTarget() {
+            if (!focusedGesture) return;
+            if (focusedGesture.startsWith('category:')) {
+                applyCategory(focusedGesture.split(':')[1]);
+            } else {
+                triggerAction(focusedGesture);
+            }
+        }
+
+        function goBackToCategories() {
+            showCategoryPicker();
+            playBeep(520, 0.1);
+        }
+
+        function addLogRecord(actionKey, text) {
+            const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const actionNames = {
+                left: '向左看', right: '向右看', up: '向上看', down: '向下看',
+                blinkOnce: '眨眼一下', blinkTwice: '眨眼兩下'
+            };
+
+            const logItem = document.createElement('div');
+            logItem.className = 'bg-slate-900/80 p-2 rounded-lg border border-slate-700/60 flex items-center justify-between text-slate-200 animate-fadeIn';
+            logItem.innerHTML = `
+                <div class="flex items-center space-x-2 overflow-hidden">
+                    <span class="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded font-bold shrink-0">${actionNames[actionKey]}</span>
+                    <span class="truncate font-semibold text-slate-100">${text}</span>
+                </div>
+                <span class="text-[10px] text-slate-500 font-mono ml-2 shrink-0">${timeStr}</span>
+            `;
+
+            if (speechLogList.querySelector('.italic')) {
+                speechLogList.innerHTML = '';
+            }
+            speechLogList.prepend(logItem);
+        }
+
+        // Calculate Euclidean Distance between 2D points
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // Calculate Eye Aspect Ratio (EAR) for Blink Detection
+        // EAR = (|p2-p6| + |p3-p5|) / (2 * |p1-p4|)
+        function getEAR(landmarks, top1, top2, bottom1, bottom2, left, right) {
+            const dVertical1 = distance(landmarks[top1], landmarks[bottom1]);
+            const dVertical2 = distance(landmarks[top2], landmarks[bottom2]);
+            const dHorizontal = distance(landmarks[left], landmarks[right]);
+            return (dVertical1 + dVertical2) / (2.0 * dHorizontal);
+        }
+
+        // Calculate Iris Position Relative to Eye Outer Bounding Box
+        function getGazeRatio(landmarks, irisIndex, leftCorner, rightCorner, topCorner, bottomCorner) {
+            const iris = landmarks[irisIndex];
+            const left = landmarks[leftCorner];
+            const right = landmarks[rightCorner];
+            const top = landmarks[topCorner];
+            const bottom = landmarks[bottomCorner];
+
+            const eyeWidth = distance(left, right);
+            const eyeHeight = distance(top, bottom);
+
+            // Normalized Horizontal Ratio (0 = Far Right, 1 = Far Left in landmark terms)
+            const horizRatio = (iris.x - left.x) / (right.x - left.x);
+            // Normalized Vertical Ratio (0 = Top, 1 = Bottom)
+            const vertRatio = (iris.y - top.y) / (bottom.y - top.y);
+
+            return { x: horizRatio, y: vertRatio };
+        }
+
+        function onResults(results) {
+            // Match Canvas Size
+            if (canvas.width !== webcam.videoWidth) {
+                canvas.width = webcam.videoWidth;
+                canvas.height = webcam.videoHeight;
+            }
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+                statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400 mr-2 animate-pulse"></span>未檢測到臉部`;
+                resetDwellState();
+                document.getElementById('gazePointer').style.opacity = '0';
+                canvasCtx.restore();
+                return;
+            }
+
+            // Face Detected
+            statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 mr-2"></span>追蹤穩定中`;
+
+            const landmarks = results.multiFaceLandmarks[0];
+            document.getElementById('gazePointer').style.opacity = '1';
+
+            // Eye Landmark Indices in MediaPipe FaceMesh
+            // Left Eye: Outer 33, Inner 133, Top 159/158, Bottom 145/153, Iris Center 468
+            // Right Eye: Inner 362, Outer 263, Top 386/385, Bottom 374/373, Iris Center 473
+            const leftEAR = getEAR(landmarks, 159, 158, 145, 153, 33, 133);
+            const rightEAR = getEAR(landmarks, 386, 385, 374, 373, 362, 263);
+            const avgEAR = (leftEAR + rightEAR) / 2.0;
+
+            leftEarVal.textContent = leftEAR.toFixed(2);
+            rightEarVal.textContent = rightEAR.toFixed(2);
+
+            // Calculate Pupil / Iris Gaze Vectors
+            const leftGaze = getGazeRatio(landmarks, 468, 33, 133, 159, 145);
+            const rightGaze = getGazeRatio(landmarks, 473, 362, 263, 386, 374);
+            const avgGazeX = (leftGaze.x + rightGaze.x) / 2.0;
+            const avgGazeY = (leftGaze.y + rightGaze.y) / 2.0;
+
+            // Smooth frame-to-frame noise before classifying gaze direction.
+            smoothedGaze.x = smoothedGaze.x * 0.72 + avgGazeX * 0.28;
+            smoothedGaze.y = smoothedGaze.y * 0.72 + avgGazeY * 0.28;
+            gazePosVal.textContent = `X: ${smoothedGaze.x.toFixed(2)} | Y: ${smoothedGaze.y.toFixed(2)}`;
+            updateControlPointer(smoothedGaze.x, smoothedGaze.y, landmarks[1]);
+            if (isCalibrating && avgEAR > config.blinkEarThreshold) {
+                calibrationSamples.push({ x: smoothedGaze.x, y: smoothedGaze.y });
+            }
+
+            // Draw Subtle Iris Dots on Canvas
+            [468, 473].forEach(idx => {
+                const pt = landmarks[idx];
+                canvasCtx.beginPath();
+                canvasCtx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, 2 * Math.PI);
+                canvasCtx.fillStyle = '#3b82f6';
+                canvasCtx.fill();
+                canvasCtx.strokeStyle = '#ffffff';
+                canvasCtx.lineWidth = 1.5;
+                canvasCtx.stroke();
+            });
+
+            // Draw Eye Outlines
+            const leftEyePoints = [33, 160, 158, 133, 153, 144];
+            canvasCtx.beginPath();
+            leftEyePoints.forEach((idx, i) => {
+                const pt = landmarks[idx];
+                if (i === 0) canvasCtx.moveTo(pt.x * canvas.width, pt.y * canvas.height);
+                else canvasCtx.lineTo(pt.x * canvas.width, pt.y * canvas.height);
+            });
+            canvasCtx.closePath();
+            canvasCtx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+            canvasCtx.lineWidth = 1;
+            canvasCtx.stroke();
+
+            canvasCtx.restore();
+
+            // Evaluate Gestures (Blink & Gaze Direction)
+            processGestures(avgEAR, smoothedGaze.x, smoothedGaze.y);
+        }
+
+        function updateControlPointer(gazeX, gazeY, nosePoint) {
+            let pointerX;
+            let pointerY;
+            if (pointerMode === 'nose' && nosePoint) {
+                const noseX = isMirrored ? 1 - nosePoint.x : nosePoint.x;
+                pointerX = Math.max(8, Math.min(92, 50 + (noseX - 0.5) * 240));
+                pointerY = Math.max(10, Math.min(90, 50 + (nosePoint.y - 0.5) * 240));
+            } else {
+                const baseX = hasGazeCalibration ? neutralGaze.x : 0.5;
+                const baseY = hasGazeCalibration ? neutralGaze.y : 0.5;
+                const directionX = isMirrored ? -1 : 1;
+                pointerX = Math.max(8, Math.min(92, 50 + (gazeX - baseX) * directionX * 220));
+                pointerY = Math.max(10, Math.min(90, 50 + (gazeY - baseY) * 220));
+            }
+            pointerPosition = { x: pointerX, y: pointerY };
+            const pointer = document.getElementById('gazePointer');
+            pointer.style.left = `${pointerX}%`;
+            pointer.style.top = `${pointerY}%`;
+        }
+
+        function processGestures(ear, gazeX, gazeY) {
+            const now = Date.now();
+
+            // Cooldown protection
+            if (now - lastTriggerTime < config.cooldownTime * 1000) {
+                resetDwellState();
+                return;
+            }
+
+            // 1. Blink Detection Handling
+            if (ear < config.blinkEarThreshold) {
+                if (!isEyeClosed) {
+                    isEyeClosed = true;
+                    blinkHistory.push(now);
+                    // Retain blinks within window
+                    blinkHistory = blinkHistory.filter(t => now - t <= config.doubleBlinkWindow);
+                }
+                resetDwellState(); // Eye closed, skip direction gaze
+                return;
+            } else {
+                if (isEyeClosed) {
+                    isEyeClosed = false;
+
+                    // Evaluate Double Blink vs Single Blink
+                    if (blinkHistory.length >= 2) {
+                        if (config.blinkConfirm) {
+                            if (activeCategory) goBackToCategories();
+                        } else {
+                            triggerAction('blinkTwice');
+                        }
+                        blinkHistory = [];
+                        return;
+                    } else if (blinkHistory.length === 1) {
+                        // Wait double blink window before committing single blink
+                        setTimeout(() => {
+                            if (blinkHistory.length === 1 && Date.now() - blinkHistory[0] >= config.doubleBlinkWindow) {
+                                if (config.blinkConfirm) confirmFocusedTarget();
+                                else triggerAction('blinkOnce');
+                                blinkHistory = [];
+                            }
+                        }, config.doubleBlinkWindow + 20);
+                    }
+                }
+            }
+
+            // 2. Eye Gaze Direction Detection
+            if (config.blinkConfirm) {
+                const gazeTarget = getGazeTarget(gazeX, gazeY);
+                if (gazeTarget) {
+                    focusedGesture = gazeTarget;
+                    highlightCard(gazeTarget);
+                    document.getElementById('focusPrompt').textContent = gazeTarget.startsWith('category:')
+                        ? `請眨眼選擇${categoryItems[gazeTarget.split(':')[1]].label}`
+                        : `請眨眼：${document.getElementById(`phrase-${gazeTarget}`)?.value || '目前語句'}`;
+                    document.getElementById('focusPrompt').classList.remove('opacity-0');
+                    return;
+                }
+            }
+
+            // Note: Camera stream mirroring is accounted for
+            let detectedDirection = null;
+
+            // Horizontal Gaze
+            // Compare against the user's own neutral eye position. This is much
+            // more reliable than assuming every camera returns the same 0.50 center.
+            const relativeX = gazeX - neutralGaze.x;
+            const relativeY = gazeY - neutralGaze.y;
+            const horizontalThreshold = Math.max(0.055, config.gazeHorizOffset - 0.30);
+            const verticalThreshold = Math.max(0.045, config.gazeVertOffset - 0.25);
+            if (hasGazeCalibration && relativeX > horizontalThreshold) {
+                detectedDirection = isMirrored ? 'left' : 'right';
+            } else if (hasGazeCalibration && relativeX < -horizontalThreshold) {
+                detectedDirection = isMirrored ? 'right' : 'left';
+            }
+            // Vertical Gaze (Overrides or Primary)
+            else if (hasGazeCalibration && relativeY < -verticalThreshold) {
+                detectedDirection = 'up';
+            } else if (hasGazeCalibration && relativeY > verticalThreshold) {
+                detectedDirection = 'down';
+            }
+
+            // Dwell Time Calculation for Direction
+            if (detectedDirection) {
+                focusedGesture = detectedDirection;
+                const focusedPhrase = document.getElementById(`phrase-${detectedDirection}`)?.value.trim() || '目前語句';
+                document.getElementById('focusPrompt').textContent = `請眨眼：${focusedPhrase}`;
+                document.getElementById('focusPrompt').classList.remove('opacity-0');
+                if (currentGesture === detectedDirection) {
+                    const elapsed = (now - dwellStartTime) / 1000;
+                    const progressPercent = Math.min(100, (elapsed / config.dwellTime) * 100);
+
+                    updateDwellProgress(detectedDirection, progressPercent);
+
+                    if (elapsed >= config.dwellTime && !config.blinkConfirm) {
+                        triggerAction(detectedDirection);
+                        resetDwellState();
+                    }
+                } else {
+                    currentGesture = detectedDirection;
+                    dwellStartTime = now;
+                    resetDwellState();
+                    highlightCard(detectedDirection);
+                }
+            } else {
+                focusedGesture = null;
+                document.getElementById('focusPrompt').classList.add('opacity-0');
+                resetDwellState();
+            }
+        }
+
+        function triggerAction(actionKey) {
+            lastTriggerTime = Date.now();
+            highlightCard(actionKey);
+            speakActionText(actionKey);
+            resetDwellState();
+        }
+
+        function highlightCard(actionKey) {
+            document.querySelectorAll('.gesture-card').forEach(c => c.classList.remove('glow-active'));
+            document.querySelectorAll('.board-card').forEach(c => c.classList.remove('board-active'));
+            document.querySelectorAll('.overlay-card').forEach(c => c.classList.remove('overlay-active'));
+            if (actionKey && actionKey.startsWith('category:')) {
+                const categoryCard = document.getElementById(`category-${actionKey.split(':')[1]}`);
+                if (categoryCard) categoryCard.classList.add('overlay-active');
+                return;
+            }
+            const card = document.getElementById(`card-${actionKey}`);
+            if (card) card.classList.add('glow-active');
+            const boardCard = document.getElementById(`board-${actionKey}`);
+            if (boardCard) boardCard.classList.add('board-active');
+            const overlayCard = document.getElementById(`overlay-${actionKey}`);
+            if (overlayCard) overlayCard.classList.add('overlay-active');
+        }
+
+        function updateDwellProgress(actionKey, percent) {
+            const progressBar = document.getElementById(`progress-${actionKey}`);
+            if (progressBar) {
+                progressBar.style.width = `${percent}%`;
+            }
+
+            dwellProgressOverlay.classList.remove('opacity-0');
+            const directionNames = { left: '向左看', right: '向右看', up: '向上看', down: '向下看' };
+            dwellText.textContent = `鎖定 ${directionNames[actionKey]} (${percent.toFixed(0)}%)`;
+        }
+
+        function resetDwellState() {
+            currentGesture = null;
+            dwellStartTime = null;
+            dwellProgressOverlay.classList.add('opacity-0');
+            if (!focusedGesture) document.getElementById('focusPrompt').classList.add('opacity-0');
+            document.querySelectorAll('.gesture-card').forEach(c => c.classList.remove('glow-active'));
+            document.querySelectorAll('.board-card').forEach(c => c.classList.remove('board-active'));
+            document.querySelectorAll('.overlay-card').forEach(c => c.classList.remove('overlay-active'));
+            ['left', 'right', 'up', 'down', 'blinkOnce', 'blinkTwice'].forEach(key => {
+                const bar = document.getElementById(`progress-${key}`);
+                if (bar) bar.style.width = '0%';
+            });
+        }
+
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true, // Critical for iris tracking
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        faceMesh.onResults(onResults);
+
+        const camera = new Camera(webcam, {
+            onFrame: async () => {
+                await faceMesh.send({ image: webcam });
+            },
+            width: 640,
+            height: 480
+        });
+
+        // Start Camera
+        Promise.resolve(camera.start()).then(() => {
+            console.log("Webcam started successfully.");
+        }).catch(err => {
+            console.error("Webcam Error:", err);
+            statusBadge.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30";
+            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400 mr-2"></span>相機啟動失敗`;
+        });
+
+        // Toggle Mirroring
+        document.getElementById('toggleMirrorBtn').addEventListener('click', () => {
+            isMirrored = !isMirrored;
+            webcam.classList.toggle('mirror', isMirrored);
+            canvas.classList.toggle('mirror', isMirrored);
+        });
+
+        document.getElementById('togglePointerModeBtn').addEventListener('click', (event) => {
+            pointerMode = pointerMode === 'nose' ? 'gaze' : 'nose';
+            event.currentTarget.textContent = pointerMode === 'nose' ? '鼻子控制游標' : '眼睛控制游標';
+        });
+
+        document.getElementById('calibrateGazeBtn').addEventListener('click', () => {
+            calibrationSamples = [];
+            hasGazeCalibration = false;
+            isCalibrating = true;
+            dwellProgressOverlay.classList.remove('opacity-0');
+            dwellText.textContent = '校準中，請直視螢幕中央...';
+            const startedAt = Date.now();
+            const timer = setInterval(() => {
+                if (calibrationSamples.length >= 12 || Date.now() - startedAt > 1800) {
+                    clearInterval(timer);
+                    isCalibrating = false;
+                    if (calibrationSamples.length >= 5) {
+                        neutralGaze = {
+                            x: calibrationSamples.reduce((sum, p) => sum + p.x, 0) / calibrationSamples.length,
+                            y: calibrationSamples.reduce((sum, p) => sum + p.y, 0) / calibrationSamples.length
+                        };
+                        hasGazeCalibration = true;
+                        dwellText.textContent = '校準完成';
+                    } else {
+                        dwellText.textContent = '校準失敗，請確認臉部位於畫面中';
+                    }
+                    setTimeout(() => dwellProgressOverlay.classList.add('opacity-0'), 900);
+                }
+            }, 100);
+        });
+
+        // Toggle Audio
+        document.getElementById('toggleAudioBtn').addEventListener('click', (e) => {
+            config.isAudioMuted = !config.isAudioMuted;
+            const icon = e.currentTarget.querySelector('i');
+            if (config.isAudioMuted) {
+                icon.className = 'fa-solid fa-volume-xmark text-rose-400';
+            } else {
+                icon.className = 'fa-solid fa-volume-high text-slate-200';
+            }
+        });
+
+        document.getElementById('blinkConfirmInput').addEventListener('change', (e) => {
+            config.blinkConfirm = e.target.checked;
+            localStorage.setItem('eyeAacConfig', JSON.stringify(config));
+        });
+
+        // Clear Log
+        document.getElementById('clearLogBtn').addEventListener('click', () => {
+            speechLogList.innerHTML = '<div class="text-slate-500 italic text-center py-4">尚無發音紀錄</div>';
+        });
+
+        // Settings Modal Open/Close Controls
+        const settingsModal = document.getElementById('settingsModal');
+        document.getElementById('openSettingsBtn').addEventListener('click', () => {
+            settingsModal.classList.remove('opacity-0', 'pointer-events-none');
+        });
+        document.getElementById('closeSettingsBtn').addEventListener('click', () => {
+            settingsModal.classList.add('opacity-0', 'pointer-events-none');
+        });
+
+        // Real-time Slider Value Bindings
+        document.getElementById('dwellTimeInput').addEventListener('input', (e) => {
+            config.dwellTime = parseFloat(e.target.value);
+            document.getElementById('dwellTimeVal').textContent = `${config.dwellTime} 秒`;
+        });
+        document.getElementById('cooldownTimeInput').addEventListener('input', (e) => {
+            config.cooldownTime = parseFloat(e.target.value);
+            document.getElementById('cooldownTimeVal').textContent = `${config.cooldownTime} 秒`;
+        });
+        document.getElementById('blinkEarInput').addEventListener('input', (e) => {
+            config.blinkEarThreshold = parseFloat(e.target.value);
+            document.getElementById('blinkEarVal').textContent = config.blinkEarThreshold.toFixed(2);
+        });
+        document.getElementById('doubleBlinkSpeedInput').addEventListener('input', (e) => {
+            config.doubleBlinkWindow = parseInt(e.target.value);
+            document.getElementById('doubleBlinkSpeedVal').textContent = `${config.doubleBlinkWindow} ms`;
+        });
+        document.getElementById('gazeHorizInput').addEventListener('input', (e) => {
+            config.gazeHorizOffset = parseFloat(e.target.value);
+            document.getElementById('gazeHorizVal').textContent = config.gazeHorizOffset.toFixed(2);
+        });
+        document.getElementById('gazeVertInput').addEventListener('input', (e) => {
+            config.gazeVertOffset = parseFloat(e.target.value);
+            document.getElementById('gazeVertVal').textContent = config.gazeVertOffset.toFixed(2);
+        });
+        document.getElementById('speechRateInput').addEventListener('input', (e) => {
+            config.speechRate = parseFloat(e.target.value);
+        });
+        document.getElementById('speechPitchInput').addEventListener('input', (e) => {
+            config.speechPitch = parseFloat(e.target.value);
+        });
+        document.getElementById('voiceSelect').addEventListener('change', (e) => {
+            config.selectedVoiceURI = e.target.value;
+        });
+
+        document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+            settingsModal.classList.add('opacity-0', 'pointer-events-none');
+            // Save to localStorage
+            localStorage.setItem('eyeAacConfig', JSON.stringify(config));
+        });
+
+        // Load Saved Configuration on Startup
+        const saved = localStorage.getItem('eyeAacConfig');
+        if (saved) {
+            try {
+                Object.assign(config, JSON.parse(saved));
+                document.getElementById('dwellTimeInput').value = config.dwellTime;
+                document.getElementById('dwellTimeVal').textContent = `${config.dwellTime} 秒`;
+                document.getElementById('cooldownTimeInput').value = config.cooldownTime;
+                document.getElementById('cooldownTimeVal').textContent = `${config.cooldownTime} 秒`;
+                document.getElementById('blinkEarInput').value = config.blinkEarThreshold;
+                document.getElementById('blinkEarVal').textContent = config.blinkEarThreshold.toFixed(2);
+                document.getElementById('doubleBlinkSpeedInput').value = config.doubleBlinkWindow;
+                document.getElementById('doubleBlinkSpeedVal').textContent = `${config.doubleBlinkWindow} ms`;
+                document.getElementById('gazeHorizInput').value = config.gazeHorizOffset;
+                document.getElementById('gazeHorizVal').textContent = config.gazeHorizOffset.toFixed(2);
+                document.getElementById('gazeVertInput').value = config.gazeVertOffset;
+                document.getElementById('gazeVertVal').textContent = config.gazeVertOffset.toFixed(2);
+                document.getElementById('speechRateInput').value = config.speechRate;
+                document.getElementById('speechPitchInput').value = config.speechPitch;
+                document.getElementById('blinkConfirmInput').checked = config.blinkConfirm !== false;
+            } catch(e) { console.warn('Failed to parse saved config:', e); }
+        }
+
+        // Persist custom phrases locally so caregiver edits survive a refresh.
+        ['left', 'right', 'up', 'down', 'blinkOnce', 'blinkTwice'].forEach((key) => {
+            const input = document.getElementById(`phrase-${key}`);
+            const savedPhrase = localStorage.getItem(`eyeAacPhrase:${key}`);
+            if (input && savedPhrase !== null) input.value = savedPhrase;
+            if (input) input.addEventListener('input', () => localStorage.setItem(`eyeAacPhrase:${key}`, input.value));
+            if (input) input.addEventListener('input', () => {
+                const boardCard = document.getElementById(`board-${key}`);
+                if (boardCard) boardCard.textContent = input.value || '未設定語句';
+                const overlayCard = document.getElementById(`overlay-${key}`);
+                if (overlayCard) overlayCard.textContent = input.value || '未設定語句';
+            });
+            const boardCard = document.getElementById(`board-${key}`);
+            if (boardCard && input) boardCard.textContent = input.value || '未設定語句';
+            const overlayCard = document.getElementById(`overlay-${key}`);
+            if (overlayCard && input) overlayCard.textContent = input.value || '未設定語句';
+        });
+
+        document.getElementById('categoryPhysiologicalBtn').addEventListener('click', () => applyCategory('physiological'));
+        document.getElementById('categoryBodyBtn').addEventListener('click', () => applyCategory('body'));
+        applyCategory('physiological');
+    </script>
+</body>
+</html>
